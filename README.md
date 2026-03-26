@@ -91,6 +91,12 @@ cd ../backend && uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 Set `FRONTEND_ORIGIN` and `CORS_ALLOW_ORIGINS` to your public site URL(s).
 
+## Deploy on Google Cloud Run
+
+The repo includes a root [`Dockerfile`](Dockerfile) that builds the frontend into `backend/static` and runs FastAPI on `$PORT` (Cloud Run). Migrations run on container start via [`backend/docker-entrypoint.sh`](backend/docker-entrypoint.sh).
+
+**Step-by-step guide (first-time GCP, GUI-first):** [docs/DEPLOY_GCP.md](docs/DEPLOY_GCP.md)
+
 ## Tests
 
 ```bash
