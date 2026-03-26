@@ -1,0 +1,17 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+sqlalchemy[asyncio]>=2.0.36
+asyncpg>=0.30.0
+alembic>=1.14.0
+pydantic-settings>=2.6.0
+httpx>=0.28.0
+cryptography>=44.0.0
+PyJWT>=2.10.0
+openai>=1.59.0
+google-auth>=2.37.0
+google-auth-oauthlib>=1.2.0
+slowapi>=0.1.9
+tenacity>=9.0.0
+python-multipart>=0.0.20
+email-validator>=2.2.0
+pytest>=8.3.0

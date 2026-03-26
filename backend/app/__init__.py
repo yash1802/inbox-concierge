@@ -1,0 +1,1 @@
+"""Inbox Concierge FastAPI application."""
