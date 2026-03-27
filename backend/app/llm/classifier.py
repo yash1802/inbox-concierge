@@ -14,43 +14,10 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt,
 from app.config import Settings
 from app.db.models import LlmOperation, LlmRun
 from app.gmail.dto import ThreadPayload
+from app.llm.prompts import build_classification_messages, classification_response_format
 from app.llm.schemas import BatchClassificationResult, ThreadClassificationItem
 
 logger = logging.getLogger(__name__)
-
-
-def _threads_prompt_block(threads: list[ThreadPayload]) -> str:
-    lines: list[str] = []
-    for t in threads:
-        lines.append(
-            f"- id={t.gmail_thread_id}\n"
-            f"  subject: {t.subject}\n"
-            f"  from: {t.from_addr or 'unknown'}\n"
-            f"  preview: {t.snippet[:500]}\n"
-        )
-    return "\n".join(lines)
-
-
-def _build_messages(allowed_labels: list[str], threads: list[ThreadPayload]) -> list[dict[str, str]]:
-    label_lines = "\n".join(f"- {n}" for n in allowed_labels)
-    body = (
-        "You classify email threads into one or more labels from the CLOSED SET below.\n"
-        "Every thread id listed must appear exactly once in the results with at least one label.\n"
-        "Only use labels exactly as written (case-sensitive match to the list).\n"
-        f"CLOSED SET:\n{label_lines}\n\n"
-        "Threads:\n"
-        f"{_threads_prompt_block(threads)}\n\n"
-        "Return a JSON object with key 'results': array of objects, each with "
-        "gmail_thread_id (string), categories (non-empty array of strings from the closed set), "
-        "reason (short string), confidence (number 0-1)."
-    )
-    return [
-        {
-            "role": "system",
-            "content": "You are an inbox assistant. Output a single JSON object only.",
-        },
-        {"role": "user", "content": body},
-    ]
 
 
 def _validate_against_allowed(
@@ -90,8 +57,10 @@ async def classify_threads_batch(
     if not threads:
         return []
     client = AsyncOpenAI(api_key=settings.openai_api_key)
-    messages = _build_messages(allowed_labels, threads)
+    messages = build_classification_messages(allowed_labels, threads)
     input_payload: dict[str, Any] = {
+        "prompt_style": "static_system_cached_plus_user_json",
+        "structured_outputs": True,
         "allowed_labels": allowed_labels,
         "threads": [
             {
@@ -116,7 +85,7 @@ async def classify_threads_batch(
             resp = await client.chat.completions.create(
                 model=settings.llm_model,
                 messages=messages,
-                response_format={"type": "json_object"},
+                response_format=classification_response_format(),
                 temperature=0.2,
             )
             break

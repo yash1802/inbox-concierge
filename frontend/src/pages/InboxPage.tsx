@@ -14,6 +14,7 @@ import {
   startSync,
   type Category,
   type ThreadRow,
+  type ThreadsPage,
 } from "../api";
 import { loadThreadCache, mergeThreadsById, saveThreadCache } from "../storage";
 
@@ -42,6 +43,9 @@ export function InboxPage() {
   const prefetchingRef = useRef(false);
   const userIdRef = useRef<string | undefined>(undefined);
   const prefetchMoreRef = useRef<() => Promise<void>>(async () => {});
+  const nextCursorRef = useRef<{ internal_date: number; id: string } | null>(null);
+  /** Bumps when `activeJobId` changes so stale job-poll ticks skip setState after await. */
+  const jobPollGenRef = useRef(0);
 
   const meQuery = useQuery({ queryKey: ["me"], queryFn: getMe });
   const categoriesQuery = useQuery({
@@ -74,6 +78,10 @@ export function InboxPage() {
   useEffect(() => {
     serverEndRef.current = serverEnd;
   }, [serverEnd]);
+
+  useEffect(() => {
+    nextCursorRef.current = nextCursor;
+  }, [nextCursor]);
 
   useEffect(() => {
     if (dateRangePicker === null) return;
@@ -146,26 +154,40 @@ export function InboxPage() {
     }
   }, [meQuery.isFetched, meQuery.data, navigate]);
 
+  /** Merge newest page from API into buffer. Updates cursor/serverEnd only while pagination not started (cursor null). */
+  const mergeFirstPageIntoBuffer = useCallback((page: ThreadsPage) => {
+    if (!userId) return;
+    const lockPagination = nextCursorRef.current !== null;
+    setBuffer((prev) => {
+      const merged = mergeThreadsById(prev, page.items);
+      saveThreadCache(userId, merged);
+      console.log(INBOX_DEBUG, "mergeFirstPageIntoBuffer", {
+        apiItems: page.items.length,
+        bufferLen: merged.length,
+        paginationLocked: lockPagination,
+      });
+      return merged;
+    });
+    if (!lockPagination) {
+      setNextCursor(
+        page.next_cursor_internal_date != null && page.next_cursor_id
+          ? { internal_date: page.next_cursor_internal_date, id: page.next_cursor_id }
+          : null,
+      );
+      setServerEnd(page.items.length < 200 || !page.next_cursor_id);
+    }
+  }, [userId]);
+
   const refreshLatest200 = useCallback(async () => {
     if (!userId) return;
     const page = await fetchThreadsPage({ limit: 200 });
-    setBuffer((prev) => {
-      const merged = mergeThreadsById(prev, page.items);
-      const trimmed = merged.slice(0, 200);
-      saveThreadCache(userId, trimmed);
-      console.log(INBOX_DEBUG, "refreshLatest200", {
-        apiItems: page.items.length,
-        bufferAfterTrim: trimmed.length,
-      });
-      return trimmed;
-    });
-    setNextCursor(
-      page.next_cursor_internal_date != null && page.next_cursor_id
-        ? { internal_date: page.next_cursor_internal_date, id: page.next_cursor_id }
-        : null,
-    );
-    setServerEnd(page.items.length < 200 || !page.next_cursor_id);
-  }, [userId]);
+    mergeFirstPageIntoBuffer(page);
+  }, [mergeFirstPageIntoBuffer, userId]);
+
+  useEffect(() => {
+    if (!userId) return;
+    void refreshLatest200();
+  }, [userId, refreshLatest200]);
 
   const beginJobPoll = useCallback((jobId: string, kind: string) => {
     setActiveJobId(jobId);
@@ -174,19 +196,26 @@ export function InboxPage() {
 
   useEffect(() => {
     if (!activeJobId) return;
+    const myGen = ++jobPollGenRef.current;
     let cancelled = false;
     const tick = async () => {
       try {
         const j = await getJob(activeJobId);
-        if (cancelled) return;
+        if (cancelled || myGen !== jobPollGenRef.current) return;
         if (j.status === "completed" || j.status === "failed") {
           setActiveJobId(null);
           setJobKind(null);
           if (j.status === "completed" && userId) {
-            await refreshLatest200();
+            const page = await fetchThreadsPage({ limit: 200 });
+            if (cancelled || myGen !== jobPollGenRef.current) return;
+            mergeFirstPageIntoBuffer(page);
             await qc.refetchQueries({ queryKey: ["categories"] });
           }
+          return;
         }
+        const page = await fetchThreadsPage({ limit: 200 });
+        if (cancelled || myGen !== jobPollGenRef.current) return;
+        mergeFirstPageIntoBuffer(page);
       } catch {
         /* ignore */
       }
@@ -197,7 +226,7 @@ export function InboxPage() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [activeJobId, qc, refreshLatest200, userId]);
+  }, [activeJobId, mergeFirstPageIntoBuffer, qc, userId]);
 
   const autoSyncKey = userId ? `auto_sync_${userId}` : null;
   useEffect(() => {
@@ -535,8 +564,15 @@ export function InboxPage() {
           </ul>
           <div ref={sentinelRef} className="h-8 shrink-0" />
           {listEnd && <p className="mt-4 text-center text-sm text-zinc-500">end</p>}
+          {!visible.length && busy && (
+            <p className="mt-10 text-center text-sm text-zinc-500">
+              New threads will appear here as they are classified.
+            </p>
+          )}
           {!visible.length && !busy && (
-            <p className="mt-10 text-center text-sm text-zinc-500">No threads yet. Sync in progress…</p>
+            <p className="mt-10 text-center text-sm text-zinc-500">
+              No threads yet. Use &quot;Fetch new mail&quot; to sync.
+            </p>
           )}
         </div>
       </main>
