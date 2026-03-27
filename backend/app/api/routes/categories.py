@@ -34,6 +34,10 @@ class AddCategoriesOut(BaseModel):
     added: list[str]
 
 
+class RecategorizeAllOut(BaseModel):
+    job_id: str
+
+
 @router.get("", response_model=list[CategoryOut])
 async def list_categories(
     user: CurrentUser, session: SessionDep, response: Response
@@ -99,8 +103,46 @@ async def add_categories(body: AddCategoriesBody, user: CurrentUser, session: Se
     return AddCategoriesOut(job_id=str(job_id), added=added)
 
 
+@router.post(
+    "/recategorize-all",
+    response_model=RecategorizeAllOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def recategorize_all(user: CurrentUser, session: SessionDep) -> RecategorizeAllOut:
+    if await job_service.has_active_job(session, user.id):
+        raise HTTPException(
+            status_code=409,
+            detail="A sync or recategorize job is already running",
+        )
+    labels = await list_allowed_labels(session, user.id)
+    job = await job_service.create_job(
+        session,
+        user.id,
+        JobKind.recategorize.value,
+        allowed_labels_snapshot=labels,
+    )
+    await session.commit()
+    job_id = job.id
+
+    task = asyncio.create_task(run_recategorize_job(job_id))
+
+    def _done(t: asyncio.Task[None]) -> None:
+        try:
+            t.result()
+        except Exception:
+            logger.exception("Background recategorize job raised")
+
+    task.add_done_callback(_done)
+    return RecategorizeAllOut(job_id=str(job_id))
+
+
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_category(category_id: str, user: CurrentUser, session: SessionDep) -> None:
+    if await job_service.has_active_job(session, user.id):
+        raise HTTPException(
+            status_code=409,
+            detail="Wait for the current sync or recategorization to finish before deleting categories.",
+        )
     try:
         cid = uuid.UUID(category_id)
     except ValueError as e:

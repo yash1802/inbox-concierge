@@ -50,6 +50,10 @@ export async function addCategoriesCsv(names: string): Promise<{ job_id: string;
   });
 }
 
+export async function startRecategorizeAll(): Promise<{ job_id: string }> {
+  return apiFetch("/api/categories/recategorize-all", { method: "POST" });
+}
+
 export async function deleteCategory(id: string): Promise<void> {
   await apiFetch(`/api/categories/${id}`, { method: "DELETE" });
 }

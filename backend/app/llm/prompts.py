@@ -1,5 +1,3 @@
-"""Classification prompt construction and OpenAI response_format for structured outputs."""
-
 from __future__ import annotations
 
 import json
@@ -26,7 +24,7 @@ STATIC_CLASSIFICATION_SYSTEM_PROMPT = """You are an inbox classification engine.
 - `reason`: one short factual phrase (no PII beyond what is already in the thread line).
 - `confidence`: 0.0–1.0 reflecting how well the snippet supports the choice.
 
-## Few-shot examples (hypothetical labels and ids — format only)
+## Examples (hypothetical labels and ids — format only)
 
 **Example 1 — allowed labels for this toy example:** `Important`, `Newsletter`, `Transactional`
 Untrusted thread (conceptually):

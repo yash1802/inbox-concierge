@@ -11,6 +11,7 @@ import {
   getMe,
   listCategories,
   logout,
+  startRecategorizeAll,
   startSync,
   type Category,
   type ThreadRow,
@@ -256,6 +257,11 @@ export function InboxPage() {
     },
   });
 
+  const recategorizeAllMutation = useMutation({
+    mutationFn: startRecategorizeAll,
+    onSuccess: (d) => beginJobPoll(d.job_id, "recategorize"),
+  });
+
   const filtered = useMemo(() => {
     const fromTs = fromDate ? new Date(fromDate).setHours(0, 0, 0, 0) : undefined;
     const toTs = toDate ? new Date(toDate).setHours(23, 59, 59, 999) : undefined;
@@ -383,7 +389,19 @@ export function InboxPage() {
   }
 
   const busy = !!activeJobId;
-  const jobLabel = jobKind === "recategorize" ? "Re-categorizing…" : "Syncing Gmail…";
+  const globalBusy =
+    busy ||
+    syncMutation.isPending ||
+    addCatsMutation.isPending ||
+    recategorizeAllMutation.isPending;
+  const jobLabel =
+    jobKind === "recategorize"
+      ? "Re-categorizing…"
+      : jobKind === "sync"
+        ? "Syncing Gmail…"
+        : "Working…";
+  const syncActiveForEmptyState =
+    syncMutation.isPending || (!!activeJobId && jobKind === "sync");
 
   return (
     <div className="mx-auto flex min-h-full max-w-6xl flex-col gap-6 px-4 py-8 md:flex-row md:items-start md:px-8">
@@ -407,11 +425,19 @@ export function InboxPage() {
           </div>
           <button
             type="button"
-            disabled={busy || syncMutation.isPending}
+            disabled={globalBusy}
             onClick={() => syncMutation.mutate()}
             className="mt-5 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm font-medium text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Fetch new mail
+          </button>
+          <button
+            type="button"
+            disabled={globalBusy}
+            onClick={() => recategorizeAllMutation.mutate()}
+            className="mt-3 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm font-medium text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Re-categorize all
           </button>
           <div className="mt-6 border-t border-zinc-800 pt-5">
             <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">New categories</p>
@@ -420,11 +446,12 @@ export function InboxPage() {
               onChange={(e) => setNewCats(e.target.value)}
               placeholder="Jobs, Receipts, …"
               rows={2}
-              className="mt-2 w-full resize-none rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600"
+              disabled={globalBusy}
+              className="mt-2 w-full resize-none rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-40"
             />
             <button
               type="button"
-              disabled={busy || addCatsMutation.isPending || !newCats.trim()}
+              disabled={globalBusy || !newCats.trim()}
               onClick={() => addCatsMutation.mutate()}
               className="mt-2 w-full rounded-xl bg-white px-3 py-2 text-sm font-medium text-zinc-900 disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -451,7 +478,8 @@ export function InboxPage() {
                   {!c.is_system && (
                     <button
                       type="button"
-                      className="text-xs text-red-400 hover:text-red-300"
+                      disabled={globalBusy}
+                      className="text-xs text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -523,9 +551,10 @@ export function InboxPage() {
         className="flex min-h-0 min-w-0 flex-1 flex-col md:overflow-hidden"
         style={mainColumnMaxPx != null ? { maxHeight: mainColumnMaxPx } : undefined}
       >
-        {busy && (
+        {globalBusy && (
           <div className="mb-4 shrink-0 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-            {jobLabel} This may take a minute. You can keep browsing existing threads below.
+            {activeJobId ? jobLabel : "Starting…"} Only one of fetch, re-categorize, or add categories can run at a
+            time. You can keep browsing existing threads below.
           </div>
         )}
         <header className="mb-4 shrink-0 md:mb-6">
@@ -564,12 +593,12 @@ export function InboxPage() {
           </ul>
           <div ref={sentinelRef} className="h-8 shrink-0" />
           {listEnd && <p className="mt-4 text-center text-sm text-zinc-500">end</p>}
-          {!visible.length && busy && (
+          {!visible.length && syncActiveForEmptyState && (
             <p className="mt-10 text-center text-sm text-zinc-500">
               New threads will appear here as they are classified.
             </p>
           )}
-          {!visible.length && !busy && (
+          {!visible.length && !globalBusy && (
             <p className="mt-10 text-center text-sm text-zinc-500">
               No threads yet. Use &quot;Fetch new mail&quot; to sync.
             </p>
