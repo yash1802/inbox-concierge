@@ -1,6 +1,34 @@
 const rawBase = import.meta.env.VITE_API_BASE_URL ?? "";
 const API_BASE = typeof rawBase === "string" ? rawBase.replace(/\/+$/, "") : "";
 
+export class ApiHttpError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiHttpError";
+    this.status = status;
+  }
+}
+
+function detailFromJsonBody(text: string): string | null {
+  try {
+    const j = JSON.parse(text) as { detail?: unknown; error?: unknown };
+    if (typeof j.error === "string") return j.error;
+    const d = j.detail;
+    if (typeof d === "string") return d;
+    if (Array.isArray(d)) {
+      const parts = d.map((x) =>
+        typeof x === "object" && x && "msg" in x ? String((x as { msg: unknown }).msg) : String(x),
+      );
+      if (parts.length) return parts.join("; ");
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -15,14 +43,9 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   }
   const text = await res.text();
   if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const j = JSON.parse(text) as { detail?: string };
-      if (typeof j.detail === "string") detail = j.detail;
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `HTTP ${res.status}`);
+    const fromBody = detailFromJsonBody(text);
+    const message = fromBody || res.statusText || `HTTP ${res.status}`;
+    throw new ApiHttpError(message, res.status);
   }
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }

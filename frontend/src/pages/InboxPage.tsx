@@ -5,6 +5,7 @@ import "react-day-picker/style.css";
 import { useNavigate } from "react-router-dom";
 import {
   addCategoriesCsv,
+  ApiHttpError,
   deleteCategory,
   fetchThreadsPage,
   getJob,
@@ -75,6 +76,7 @@ export function InboxPage() {
   const dateRangeSectionRef = useRef<HTMLDivElement | null>(null);
   /** md+: main column max-height tracks sidebar card; updates only when height changes by ≥2px to avoid observer↔state loops */
   const [mainColumnMaxPx, setMainColumnMaxPx] = useState<number | null>(null);
+  const [categoryRateLimitMessage, setCategoryRateLimitMessage] = useState<string | null>(null);
 
   useEffect(() => {
     serverEndRef.current = serverEnd;
@@ -251,15 +253,31 @@ export function InboxPage() {
 
   const addCatsMutation = useMutation({
     mutationFn: () => addCategoriesCsv(newCats),
+    onMutate: () => setCategoryRateLimitMessage(null),
     onSuccess: (d) => {
+      setCategoryRateLimitMessage(null);
       setNewCats("");
       beginJobPoll(d.job_id, "recategorize");
+    },
+    onError: (err: unknown) => {
+      if (err instanceof ApiHttpError && err.status === 429) {
+        setCategoryRateLimitMessage(err.message);
+      }
     },
   });
 
   const recategorizeAllMutation = useMutation({
     mutationFn: startRecategorizeAll,
-    onSuccess: (d) => beginJobPoll(d.job_id, "recategorize"),
+    onMutate: () => setCategoryRateLimitMessage(null),
+    onSuccess: (d) => {
+      setCategoryRateLimitMessage(null);
+      beginJobPoll(d.job_id, "recategorize");
+    },
+    onError: (err: unknown) => {
+      if (err instanceof ApiHttpError && err.status === 429) {
+        setCategoryRateLimitMessage(err.message);
+      }
+    },
   });
 
   const filtered = useMemo(() => {
@@ -439,6 +457,18 @@ export function InboxPage() {
           >
             Re-categorize all
           </button>
+          {categoryRateLimitMessage && (
+            <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+              <p>{categoryRateLimitMessage}</p>
+              <button
+                type="button"
+                onClick={() => setCategoryRateLimitMessage(null)}
+                className="mt-2 text-xs text-amber-200/90 underline hover:text-amber-100"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           <div className="mt-6 border-t border-zinc-800 pt-5">
             <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">New categories</p>
             <textarea

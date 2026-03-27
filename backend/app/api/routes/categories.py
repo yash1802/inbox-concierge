@@ -4,11 +4,12 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 
 from app.auth.deps import CurrentUser, SessionDep
+from app.rate_limit import limiter, rate_limit_key_user_or_ip
 from app.db.models import Category, JobKind, ThreadCategory
 from app.services import jobs as job_service
 from app.services.category_seed import list_allowed_labels
@@ -52,7 +53,14 @@ async def list_categories(
 
 
 @router.post("", response_model=AddCategoriesOut, status_code=status.HTTP_202_ACCEPTED)
-async def add_categories(body: AddCategoriesBody, user: CurrentUser, session: SessionDep) -> AddCategoriesOut:
+@limiter.limit(
+    "5/3hours",
+    key_func=rate_limit_key_user_or_ip,
+    error_message="You can add new categories at most 5 times every 3 hours. Try again later.",
+)
+async def add_categories(
+    request: Request, body: AddCategoriesBody, user: CurrentUser, session: SessionDep
+) -> AddCategoriesOut:
     if await job_service.has_active_job(session, user.id):
         raise HTTPException(status_code=409, detail="A sync or recategorize job is already running")
     raw_parts = [p.strip() for p in body.names.split(",")]
@@ -108,7 +116,12 @@ async def add_categories(body: AddCategoriesBody, user: CurrentUser, session: Se
     response_model=RecategorizeAllOut,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def recategorize_all(user: CurrentUser, session: SessionDep) -> RecategorizeAllOut:
+@limiter.limit(
+    "5/3hours",
+    key_func=rate_limit_key_user_or_ip,
+    error_message="You can re-categorize all threads at most 5 times every 3 hours. Try again later.",
+)
+async def recategorize_all(request: Request, user: CurrentUser, session: SessionDep) -> RecategorizeAllOut:
     if await job_service.has_active_job(session, user.id):
         raise HTTPException(
             status_code=409,
