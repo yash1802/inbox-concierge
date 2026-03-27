@@ -10,10 +10,13 @@ from sqlalchemy import delete, select
 
 from app.auth.deps import CurrentUser, SessionDep
 from app.rate_limit import limiter, rate_limit_key_user_or_ip
-from app.db.models import Category, JobKind, ThreadCategory
+from app.db.models import Category, ThreadCategory
 from app.services import jobs as job_service
-from app.services.category_seed import list_allowed_labels
-from app.utils.category_norm import normalize_category_name
+from app.services.category_mutations import (
+    AllCategoryNamesExistError,
+    create_recategorize_job_after_category_change,
+    insert_new_categories,
+)
 from app.services.recategorize_service import run_recategorize_job
 
 router = APIRouter(prefix="/categories", tags=["categories"])
@@ -67,37 +70,12 @@ async def add_categories(
     names = [p for p in raw_parts if p]
     if not names:
         raise HTTPException(status_code=400, detail="No category names provided")
-    added: list[str] = []
-    for name in names:
-        norm = normalize_category_name(name)
-        existing = await session.execute(
-            select(Category.id).where(
-                Category.user_id == user.id, Category.normalized_name == norm
-            )
-        )
-        if existing.scalar_one_or_none() is not None:
-            continue
-        session.add(
-            Category(
-                user_id=user.id,
-                name=name,
-                normalized_name=norm,
-                is_system=False,
-            )
-        )
-        added.append(name)
-    if not added:
-        raise HTTPException(status_code=400, detail="All category names already exist")
-    await session.flush()
-    labels = await list_allowed_labels(session, user.id)
-    job = await job_service.create_job(
-        session,
-        user.id,
-        JobKind.recategorize.value,
-        allowed_labels_snapshot=labels,
-    )
+    try:
+        added = await insert_new_categories(session, user.id, names)
+    except AllCategoryNamesExistError:
+        raise HTTPException(status_code=400, detail="All category names already exist") from None
+    job_id = await create_recategorize_job_after_category_change(session, user.id)
     await session.commit()
-    job_id = job.id
 
     task = asyncio.create_task(run_recategorize_job(job_id))
 
@@ -127,15 +105,8 @@ async def recategorize_all(request: Request, user: CurrentUser, session: Session
             status_code=409,
             detail="A sync or recategorize job is already running",
         )
-    labels = await list_allowed_labels(session, user.id)
-    job = await job_service.create_job(
-        session,
-        user.id,
-        JobKind.recategorize.value,
-        allowed_labels_snapshot=labels,
-    )
+    job_id = await create_recategorize_job_after_category_change(session, user.id)
     await session.commit()
-    job_id = job.id
 
     task = asyncio.create_task(run_recategorize_job(job_id))
 

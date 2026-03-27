@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -16,6 +16,21 @@ from app.config import get_settings
 from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_static_file(static_root: Path, relative: str) -> Path | None:
+    """Return path only if it is a regular file inside static_root (no path traversal)."""
+    if not relative:
+        return None
+    rel = Path(relative)
+    if rel.is_absolute() or ".." in rel.parts:
+        return None
+    candidate = (static_root / rel).resolve()
+    try:
+        candidate.relative_to(static_root.resolve())
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
 
 
 @asynccontextmanager
@@ -57,8 +72,22 @@ def create_app() -> FastAPI:
         return RedirectResponse(url="/api/docs")
 
     static_dir = Path(__file__).resolve().parent.parent / "static"
-    if static_dir.is_dir():
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+    index_html = static_dir / "index.html"
+    if static_dir.is_dir() and index_html.is_file():
+        assets_dir = static_dir / "assets"
+        if assets_dir.is_dir():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+        @app.get("/", include_in_schema=False)
+        async def spa_index() -> FileResponse:
+            return FileResponse(index_html)
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def spa_fallback(full_path: str) -> FileResponse:
+            existing = _safe_static_file(static_dir, full_path)
+            if existing is not None:
+                return FileResponse(existing)
+            return FileResponse(index_html)
 
     return app
 
